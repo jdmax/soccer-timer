@@ -1,5 +1,5 @@
 // Bump CACHE whenever you change index.html, so phones pick up the new version.
-const CACHE = 'soccer-minutes-v1';
+const CACHE = 'soccer-minutes-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

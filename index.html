@@ -224,7 +224,7 @@ textarea{min-height:86px;resize:vertical}
 
 <div class="clockbar">
   <div class="wrap">
-    <div class="period"><b id="perNum">1</b><span>period</span></div>
+    <div class="period"><b id="perNum">1</b><span>quarter</span></div>
     <div class="clockread">
       <div class="big num" id="clockBig">00:00</div>
       <div class="sub num" id="clockSub">tap start at kickoff</div>
@@ -255,7 +255,7 @@ textarea{min-height:86px;resize:vertical}
   <div class="bench" id="bench"></div>
 
   <button class="wide ghost" id="fillBtn">Fill empty spots with who's owed minutes</button>
-  <button class="wide ghost" id="nextPerBtn">End period, start the next one</button>
+  <button class="wide ghost" id="nextPerBtn">End quarter, start the next one</button>
 
   <div class="savebox">
     <input type="text" id="gameLabel" placeholder="Who you played (optional)">
@@ -300,8 +300,8 @@ textarea{min-height:86px;resize:vertical}
   </div>
 
   <div class="block">
-    <h3>Period length</h3>
-    <p>Minutes per quarter or half. The clock beeps and pauses when it runs out.</p>
+    <h3>Quarter length</h3>
+    <p>Minutes per quarter. The clock beeps and pauses when it runs out.</p>
     <input type="number" id="perLen" min="0" max="60" step="1">
   </div>
 
@@ -365,7 +365,7 @@ let S = {
   formation: {GK:1, DEF:2, MID:2, FWD:3},
   slots: [],                        // {id, pos, playerId}
   log: {},                          // playerId -> {GK,DEF,MID,FWD} seconds
-  shift: {},                        // playerId -> seconds on current shift
+  qtr: {},                          // playerId -> seconds played this quarter
   elapsed: 0, periodElapsed: 0, period: 1,
   periodLength: 12*60,
   running: false, periodDone: false,
@@ -440,8 +440,6 @@ function buildSlots(){
 function cleanShifts(){
   // drop anyone from the field who's marked out; clear stale shift timers
   S.slots.forEach(s => { const p = s.playerId && player(s.playerId); if (!p || p.out) s.playerId = null; });
-  Object.keys(S.shift).forEach(id => { if (!onField(id)) delete S.shift[id]; });
-  S.slots.forEach(s => { if (s.playerId && S.shift[s.playerId] == null) S.shift[s.playerId] = 0; });
 }
 
 /* ---------- clock ---------- */
@@ -481,7 +479,7 @@ function commit(){
     S.slots.forEach(s => {
       if (!s.playerId) return;
       ensureLog(s.playerId)[s.pos] += dt;
-      S.shift[s.playerId] = (S.shift[s.playerId] || 0) + dt;
+      S.qtr[s.playerId] = (S.qtr[s.playerId] || 0) + dt;
     });
   }
   if (ended && !S.periodDone) {
@@ -505,7 +503,6 @@ window.addEventListener('pagehide', () => { commit(); save(true); });
 /* ---------- substitution logic ---------- */
 function sendToBench(slot){
   if (!slot.playerId) return;
-  delete S.shift[slot.playerId];
   slot.playerId = null;
 }
 function placeIn(pid, slot){
@@ -518,7 +515,6 @@ function placeIn(pid, slot){
   if (from === slot) return;
   sendToBench(slot);
   slot.playerId = pid;
-  S.shift[pid] = 0;
 }
 // score: prefer least total minutes, and nudge toward positions they've played least
 function pickFor(pos, pool){
@@ -537,7 +533,7 @@ function fillEmpty(){
     const p = pickFor(s.pos, pool);
     if (!p) return;
     pool.splice(pool.indexOf(p), 1);
-    s.playerId = p.id; S.shift[p.id] = 0;
+    s.playerId = p.id;
   });
   S.sel = null; save(true); renderAll();
 }
@@ -570,7 +566,7 @@ function renderPitch(){
       b.className = 'slot' + (p ? '' : ' empty') + (S.sel && S.sel.type==='slot' && S.sel.id===s.id ? ' sel' : '');
       b.dataset.pos = pos; b.dataset.slot = s.id;
       b.innerHTML = p
-        ? `<div class="nm">${esc(p.name)}</div><div class="mt num" data-shift="${p.id}"></div>`
+        ? `<div class="nm">${esc(p.name)}</div><div class="mt num" data-qtr="${p.id}"></div>`
         : `<div class="nm">Open</div><div class="mt">${POSNAME[pos]}</div>`;
       b.onclick = () => tapSlot(s.id);
       row.appendChild(b);
@@ -673,8 +669,8 @@ function paintTimes(){
     sub.classList.add('warn');
   } else if (S.periodLength > 0) {
     const left = S.periodLength - S.periodElapsed;
-    sub.textContent = S.periodDone ? 'period over — start the next one'
-                    : fmtClock(left) + ' left in period ' + S.period;
+    sub.textContent = S.periodDone ? 'quarter over — start the next one'
+                    : fmtClock(left) + ' left in quarter ' + S.period;
     sub.classList.toggle('warn', !S.periodDone && left <= 60);
   } else {
     sub.textContent = S.running ? 'clock running' : 'clock stopped';
@@ -684,14 +680,16 @@ function paintTimes(){
   pb.textContent = S.running ? 'Pause' : (S.elapsed > 0 ? 'Resume' : 'Start');
   pb.classList.toggle('on', S.running);
 
-  document.querySelectorAll('[data-shift]').forEach(n => {
-    const id = n.dataset.shift, sh = S.shift[id] || 0;
-    n.innerHTML = `<b>${fmt(sh)}</b> this shift · ${fmt(total(id))} total`;
-    n.parentElement.classList.toggle('longshift', sh > 8*60);
+  const heavy = S.periodLength > 0 ? S.periodLength * 0.75 : 8*60;
+  document.querySelectorAll('[data-qtr]').forEach(n => {
+    const id = n.dataset.qtr, q = S.qtr[id] || 0;
+    n.innerHTML = `<b>${fmt(q)}</b> this qtr · ${fmt(total(id))} total`;
+    n.parentElement.classList.toggle('longshift', q > heavy);
   });
   const max = Math.max(1, ...available().map(p => total(p.id)));
   document.querySelectorAll('[data-total]').forEach(n => {
-    n.textContent = fmt(total(n.dataset.total)) + ' played';
+    const id = n.dataset.total;
+    n.textContent = fmt(S.qtr[id] || 0) + ' this qtr \u00b7 ' + fmt(total(id)) + ' total';
   });
   document.querySelectorAll('[data-owed]').forEach(n => {
     const t = total(n.dataset.owed);
@@ -810,7 +808,7 @@ function teamFile(){
 function remapId(oldId, newId){
   if (oldId === newId) return;
   if (S.log[oldId]) { S.log[newId] = S.log[oldId]; delete S.log[oldId]; }
-  if (S.shift[oldId] != null) { S.shift[newId] = S.shift[oldId]; delete S.shift[oldId]; }
+  if (S.qtr[oldId] != null) { S.qtr[newId] = S.qtr[oldId]; delete S.qtr[oldId]; }
   S.slots.forEach(s => { if (s.playerId === oldId) s.playerId = newId; });
   S.games.forEach(g => {
     if (g.log && g.log[oldId]) { g.log[newId] = g.log[oldId]; delete g.log[oldId]; }
@@ -838,7 +836,7 @@ const dayLabel = iso => new Date(iso).toLocaleDateString(undefined, {month:'shor
 
 function resetGame(){
   S.anchor = null; interrupted = false;
-  S.log = {}; S.shift = {}; S.elapsed = 0; S.periodElapsed = 0; S.period = 1;
+  S.log = {}; S.qtr = {}; S.elapsed = 0; S.periodElapsed = 0; S.period = 1;
   S.running = false; S.periodDone = false; S.sel = null;
   S.attendanceSet = false; attendOpen = false;
   S.roster.forEach(p => ensureLog(p.id));
@@ -1068,6 +1066,7 @@ document.getElementById('fillBtn').onclick = fillEmpty;
 document.getElementById('nextPerBtn').onclick = () => {
   commit();
   S.period++; S.periodElapsed = 0; S.periodDone = false; S.running = false; S.anchor = null;
+  S.qtr = {};   // everyone starts the new quarter at zero
   S.sel = null; save(true); renderAll();
 };
 document.getElementById('perLen').onchange = e => {
@@ -1084,7 +1083,7 @@ document.getElementById('newGameBtn').onclick = () => {
 document.getElementById('wipeBtn').onclick = () => {
   if (!confirm('Erase every saved game and start the season over? Export the season file first if you want a copy.')) return;
   try { localStorage.removeItem(KEY); } catch(e){}
-  S.games = []; S.log = {}; S.shift = {}; S.elapsed = 0; S.periodElapsed = 0;
+  S.games = []; S.log = {}; S.qtr = {}; S.elapsed = 0; S.periodElapsed = 0;
   S.period = 1; S.running = false; S.periodDone = false; S.sel = null; openGame = null;
   S.roster = []; syncRoster();
   S.attendanceSet = false; attendOpen = false;
